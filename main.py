@@ -30,12 +30,7 @@ battery_config = {
     "step_size": 0.05
 }
 
-# Generate fake data
-np.random.seed(42)
-prices = np.random.uniform(30, 200, 24)
-carbon = np.random.uniform(100, 500, 24)
-time_range = pd.date_range("2025-01-01", periods=24, freq="H")
-
+# Helper functions
 def update_soc(soc, action, config):
     step = config["step_size"]
     if action == "charge":
@@ -73,8 +68,12 @@ def blended_strategy(prices, carbon, soc, battery_config):
 
     return pd.DataFrame(schedule)
 
-# Run simulation
+# Simulation block
 soc_start = 0.5
+prices = np.random.uniform(30, 200, 24)
+carbon = np.random.uniform(100, 500, 24)
+time_range = pd.date_range("2025-01-01", periods=24, freq="H")
+
 df_schedule = blended_strategy(prices, carbon, soc_start, battery_config)
 df_schedule["timestamp"] = time_range
 
