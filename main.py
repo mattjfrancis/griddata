@@ -3,9 +3,9 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="FlexKit Simulator", layout="wide")
+st.set_page_config(page_title="Energy Grid Battery Simulator", layout="wide")
 
-st.title("🔋 FlexKit Dispatch Strategy Simulator")
+st.title("🔋 Dispatch Strategy Simulator")
 st.markdown("""
 Simulate how a battery dispatches based on:
 - energy **price**
