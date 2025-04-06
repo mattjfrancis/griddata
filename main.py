@@ -13,12 +13,44 @@ page = st.sidebar.radio("Navigate to", ["Home", "Strategy Comparison", "Emission
 if page == "Home":
     st.title("🔋 FlexKit Energy Strategy Simulator")
     st.markdown("""
-    Welcome to FlexKit's battery dispatch simulator.  
-    You can test strategies across carbon, price, and grid demand.
+    Simulate how a battery dispatches based on:
+    - energy **price**
+    - **carbon intensity**
+    - **user demand profiles**
+    - **tariff avoidance**
+    - and multiple strategy modes
     """)
 
-    st.header("⚙️ Configure your battery simulation here...")
-    st.markdown("*(Simulation controls and graphs would be here.)*")
+    region_profiles = {
+        "UK": {"price_base": 120, "carbon_base": 250, "price_amp": 60, "carbon_amp": 100, "noise": 15},
+        "Germany": {"price_base": 90, "carbon_base": 300, "price_amp": 50, "carbon_amp": 80, "noise": 15},
+        "Texas": {"price_base": 60, "carbon_base": 400, "price_amp": 80, "carbon_amp": 120, "noise": 20},
+        "California": {"price_base": 100, "carbon_base": 200, "price_amp": 70, "carbon_amp": 60, "noise": 10},
+        "France": {"price_base": 80, "carbon_base": 100, "price_amp": 40, "carbon_amp": 30, "noise": 5},
+    }
+
+    region = st.selectbox("🌍 Select Region", list(region_profiles.keys()))
+    profile = region_profiles[region]
+
+    def generate_daily_cycle(amplitude, base, noise, phase_shift=0):
+        hours = np.arange(24)
+        cycle = base + amplitude * np.sin((hours - phase_shift) * np.pi / 12)
+        noise_component = np.random.normal(0, noise, size=24)
+        return np.clip(cycle + noise_component, 0, None)
+
+    prices = generate_daily_cycle(profile["price_amp"], profile["price_base"], profile["noise"], phase_shift=18)
+    carbon = generate_daily_cycle(profile["carbon_amp"], profile["carbon_base"], profile["noise"], phase_shift=16)
+    timestamps = pd.date_range("2025-01-01", periods=24, freq="H")
+
+    st.subheader("📉 Simulated Grid Data")
+    fig, axs = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
+    axs[0].plot(timestamps, prices, label="Price (£/MWh)", color="tab:blue")
+    axs[0].set_ylabel("Price")
+    axs[0].legend()
+    axs[1].plot(timestamps, carbon, label="Carbon Intensity (gCO₂/kWh)", color="tab:green")
+    axs[1].set_ylabel("Carbon Intensity")
+    axs[1].legend()
+    st.pyplot(fig)
 
 # ================== PAGE: STRATEGY COMPARISON ==================
 elif page == "Strategy Comparison":
