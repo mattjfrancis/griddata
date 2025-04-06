@@ -198,3 +198,47 @@ with col2:
         "user_demand_kWh": "{:.2f}",
         "grid_energy_kWh": "{:.2f}"
     }))
+
+# === Compare All Strategies ===
+st.subheader("🧠 Strategy Comparison Overview")
+
+def run_all_strategies():
+    strategies = [
+        "Blended (Price + Carbon)",
+        "Tariff Avoidance Only",
+        "Price Arbitrage",
+        "Carbon Minimizer"
+    ]
+    comparison = []
+    for strategy in strategies:
+        df = dispatch_strategy(prices, carbon, user_demand_profile, soc_start, battery_config, strategy)
+        total_energy = df["grid_energy_kWh"].sum()
+        total_cost = (df["price"] * df["grid_energy_kWh"] / 1000).sum()
+        total_emissions = (df["carbon"] * df["grid_energy_kWh"] / 1000).sum()
+        high_tariff_hours = df[df["price"] > tariff_threshold].shape[0]
+        comparison.append({
+            "Strategy": strategy,
+            "Energy (kWh)": round(total_energy, 2),
+            "Cost (£)": round(total_cost, 2),
+            "CO₂ (kg)": round(total_emissions, 2),
+            "Tariff Hours Avoided": 24 - high_tariff_hours
+        })
+    return pd.DataFrame(comparison)
+
+df_all_strategies = run_all_strategies()
+best_by_cost = df_all_strategies["Cost (£)"].idxmin()
+best_by_emissions = df_all_strategies["CO₂ (kg)"].idxmin()
+
+df_all_strategies["🏆 Best (Cost)"] = ""
+df_all_strategies.loc[best_by_cost, "🏆 Best (Cost)"] = "✅"
+df_all_strategies["🏆 Best (Carbon)"] = ""
+df_all_strategies.loc[best_by_emissions, "🏆 Best (Carbon)"] = "✅"
+
+st.dataframe(df_all_strategies.style.format({
+    "Cost (£)": "£{:.2f}",
+    "CO₂ (kg)": "{:.2f}",
+    "Energy (kWh)": "{:.2f}"
+}).highlight_min(subset=["Cost (£)", "CO₂ (kg)"], color="lightgreen"))
+
+st.caption("✅ This summary helps identify the most cost-effective and carbon-efficient strategy based on your grid conditions and load profile.")
+
