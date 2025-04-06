@@ -2,33 +2,54 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.use('Agg')
 
-# Page config
-st.set_page_config(page_title="FlexKit Dispatch Strategy Simulator", layout="wide")
+st.set_page_config(page_title="FlexKit Simulator", layout="wide")
 
+# Title
 st.title("🔋 FlexKit Dispatch Strategy Simulator")
-st.markdown("Simulate and visualize flexible energy asset behavior based on price and carbon intensity.")
+st.markdown("Simulate how a battery dispatches based on energy **price**, **carbon intensity**, and strategy preferences.")
 
-# User controls
-carbon_weight = st.slider("Carbon vs Price Priority", 0.0, 1.0, 0.5, step=0.05)
-charge_price_threshold = st.slider("Charge if Price Below (£/MWh)", 10, 150, 50)
-discharge_price_threshold = st.slider("Discharge if Price Above (£/MWh)", 50, 250, 150)
-green_threshold = st.slider("Charge if Carbon Below (gCO₂/kWh)", 50, 400, 200)
-dirty_threshold = st.slider("Discharge if Carbon Above (gCO₂/kWh)", 100, 600, 400)
+# Sidebar configuration
+st.sidebar.header("⚙️ Strategy Settings")
+price_low = st.sidebar.slider("🔻 Charge Below Price (£/MWh)", 10, 100, 50)
+price_high = st.sidebar.slider("🔺 Discharge Above Price (£/MWh)", 100, 300, 150)
+carbon_low = st.sidebar.slider("🟢 Green Threshold (gCO₂/kWh)", 50, 300, 200)
+carbon_high = st.sidebar.slider("🔴 Dirty Threshold (gCO₂/kWh)", 300, 600, 400)
+carbon_weight = st.sidebar.slider("⚖️ Carbon vs Price Weight", 0.0, 1.0, 0.5)
 
 # Battery config
 battery_config = {
-    "charge_price_threshold": charge_price_threshold,
-    "discharge_price_threshold": discharge_price_threshold,
-    "green_threshold": green_threshold,
-    "dirty_threshold": dirty_threshold,
+    "charge_price_threshold": price_low,
+    "discharge_price_threshold": price_high,
+    "green_threshold": carbon_low,
+    "dirty_threshold": carbon_high,
     "carbon_weight": carbon_weight,
     "charge_efficiency": 0.95,
     "discharge_efficiency": 0.9,
     "step_size": 0.05
 }
+
+# Generate realistic daily energy price/carbon cycle
+def generate_daily_cycle(amplitude=70, base=100, noise=10, phase_shift=0):
+    hours = np.arange(24)
+    cycle = base + amplitude * np.sin((hours - phase_shift) * np.pi / 12)
+    noise_component = np.random.normal(0, noise, size=24)
+    return np.clip(cycle + noise_component, 0, None)
+
+# Refresh data button
+if st.button("🔄 Regenerate Grid Data"):
+    st.session_state["new_data"] = True
+
+# Maintain consistent data unless refreshed
+if "prices" not in st.session_state or st.session_state.get("new_data"):
+    st.session_state["prices"] = generate_daily_cycle(phase_shift=18)  # evening peak
+    st.session_state["carbon"] = generate_daily_cycle(amplitude=100, base=300, noise=25, phase_shift=16)
+    st.session_state["timestamps"] = pd.date_range("2025-01-01", periods=24, freq="H")
+    st.session_state["new_data"] = False
+
+prices = st.session_state["prices"]
+carbon = st.session_state["carbon"]
+time_range = st.session_state["timestamps"]
 
 # Helper functions
 def update_soc(soc, action, config):
@@ -40,13 +61,11 @@ def update_soc(soc, action, config):
     return soc
 
 def blended_strategy(prices, carbon, soc, battery_config):
-    score_weight = battery_config["carbon_weight"]
     schedule = []
-
     for t, (p, c) in enumerate(zip(prices, carbon)):
         price_score = 1 - (p - min(prices)) / (max(prices) - min(prices))
         carbon_score = 1 - (c - min(carbon)) / (max(carbon) - min(carbon))
-        blended_score = score_weight * carbon_score + (1 - score_weight) * price_score
+        blended_score = battery_config["carbon_weight"] * carbon_score + (1 - battery_config["carbon_weight"]) * price_score
 
         if blended_score > 0.7 and soc < 1.0:
             action = "charge"
@@ -57,47 +76,53 @@ def blended_strategy(prices, carbon, soc, battery_config):
 
         schedule.append({
             "time": t,
+            "timestamp": time_range[t],
             "action": action,
-            "blended_score": round(blended_score, 2),
             "price": p,
             "carbon": c,
-            "soc": soc
+            "soc": soc,
+            "blended_score": round(blended_score, 2)
         })
 
         soc = update_soc(soc, action, battery_config)
 
     return pd.DataFrame(schedule)
 
-# Simulation block
+# Run simulation
 soc_start = 0.5
-prices = np.random.uniform(30, 200, 24)
-carbon = np.random.uniform(100, 500, 24)
-time_range = pd.date_range("2025-01-01", periods=24, freq="H")
-
 df_schedule = blended_strategy(prices, carbon, soc_start, battery_config)
-df_schedule["timestamp"] = time_range
 
-# Plot results
-fig, axs = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
-axs[0].plot(df_schedule["timestamp"], df_schedule["price"], label="Price (£/MWh)")
-axs[0].set_ylabel("Price")
-axs[0].legend()
+# Layout
+col1, col2 = st.columns([2, 1])
 
-axs[1].plot(df_schedule["timestamp"], df_schedule["carbon"], label="Carbon Intensity (gCO₂/kWh)", color="green")
-axs[1].set_ylabel("Carbon")
-axs[1].legend()
+with col1:
+    st.subheader("📊 Simulation Results")
 
-axs[2].plot(df_schedule["timestamp"], df_schedule["soc"], label="State of Charge", color="purple")
-axs[2].scatter(df_schedule["timestamp"],
-               df_schedule["action"].apply(lambda x: 1 if x=="charge" else (-1 if x=="discharge" else 0)),
-               label="Action",
-               c=df_schedule["action"].apply(lambda x: "blue" if x=="charge" else ("red" if x=="discharge" else "gray")))
-axs[2].set_ylabel("SOC & Action")
-axs[2].legend()
+    fig, axs = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
 
-plt.xlabel("Time")
-plt.tight_layout()
-st.pyplot(fig)
+    axs[0].plot(time_range, df_schedule["price"], label="Price (£/MWh)")
+    axs[0].set_ylabel("Price")
+    axs[0].legend()
 
-st.markdown("---")
-st.dataframe(df_schedule[["timestamp", "action", "price", "carbon", "soc"]].round(2))
+    axs[1].plot(time_range, df_schedule["carbon"], label="Carbon Intensity (gCO₂/kWh)", color="green")
+    axs[1].set_ylabel("Carbon")
+    axs[1].legend()
+
+    axs[2].plot(time_range, df_schedule["soc"], label="State of Charge", color="purple")
+    action_colors = df_schedule["action"].map({"charge": "blue", "discharge": "red", "idle": "gray"})
+    action_vals = df_schedule["action"].map({"charge": 1, "discharge": -1, "idle": 0})
+    axs[2].scatter(time_range, action_vals, color=action_colors, label="Action", zorder=3)
+    axs[2].set_ylabel("SOC / Action")
+    axs[2].legend()
+
+    plt.xlabel("Time")
+    plt.tight_layout()
+    st.pyplot(fig)
+
+with col2:
+    st.subheader("📋 Dispatch Log")
+    st.dataframe(df_schedule[["timestamp", "action", "price", "carbon", "soc", "blended_score"]].style.format({
+        "price": "£{:.0f}",
+        "carbon": "{:.0f} g",
+        "soc": "{:.2f}"
+    }))
