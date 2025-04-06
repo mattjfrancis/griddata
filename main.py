@@ -5,19 +5,37 @@ import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="FlexKit Simulator", layout="wide")
 
-# Title
 st.title("🔋 FlexKit Dispatch Strategy Simulator")
-st.markdown("Simulate how a battery dispatches based on energy **price**, **carbon intensity**, and strategy preferences.")
+st.markdown("Simulate how a battery dispatches based on energy **price**, **carbon intensity**, and custom strategy preferences.")
 
-# Sidebar configuration
-st.sidebar.header("⚙️ Strategy Settings")
+# Sidebar: Region and Battery Settings
+st.sidebar.header("🌍 Region Settings")
+region = st.sidebar.selectbox("Select Region", ["UK", "Germany", "Texas", "California", "France"])
+
+# Simulated base prices & carbon intensity per region (simplified)
+region_profiles = {
+    "UK": {"price_base": 120, "carbon_base": 250},
+    "Germany": {"price_base": 90, "carbon_base": 300},
+    "Texas": {"price_base": 60, "carbon_base": 400},
+    "California": {"price_base": 100, "carbon_base": 200},
+    "France": {"price_base": 80, "carbon_base": 100},
+}
+
+base_price = region_profiles[region]["price_base"]
+base_carbon = region_profiles[region]["carbon_base"]
+
+st.sidebar.header("🔋 Battery Settings")
+battery_capacity_kWh = st.sidebar.slider("Battery Capacity (kWh)", 5, 100, 20)
+power_rating_kW = st.sidebar.slider("Power Rating (kW)", 1, 50, 5)
+
+# Dispatch strategy config
+st.sidebar.header("⚙️ Strategy Preferences")
 price_low = st.sidebar.slider("🔻 Charge Below Price (£/MWh)", 10, 100, 50)
 price_high = st.sidebar.slider("🔺 Discharge Above Price (£/MWh)", 100, 300, 150)
 carbon_low = st.sidebar.slider("🟢 Green Threshold (gCO₂/kWh)", 50, 300, 200)
 carbon_high = st.sidebar.slider("🔴 Dirty Threshold (gCO₂/kWh)", 300, 600, 400)
 carbon_weight = st.sidebar.slider("⚖️ Carbon vs Price Weight", 0.0, 1.0, 0.5)
 
-# Battery config
 battery_config = {
     "charge_price_threshold": price_low,
     "discharge_price_threshold": price_high,
@@ -26,24 +44,24 @@ battery_config = {
     "carbon_weight": carbon_weight,
     "charge_efficiency": 0.95,
     "discharge_efficiency": 0.9,
-    "step_size": 0.05
+    "step_size": power_rating_kW / battery_capacity_kWh / 2  # how much SOC can change in one hour
 }
 
-# Generate realistic daily energy price/carbon cycle
+# Regenerate button
+if st.button("🔄 Regenerate Grid Data"):
+    st.session_state["new_data"] = True
+
+# Simulated daily cycle function
 def generate_daily_cycle(amplitude=70, base=100, noise=10, phase_shift=0):
     hours = np.arange(24)
     cycle = base + amplitude * np.sin((hours - phase_shift) * np.pi / 12)
     noise_component = np.random.normal(0, noise, size=24)
     return np.clip(cycle + noise_component, 0, None)
 
-# Refresh data button
-if st.button("🔄 Regenerate Grid Data"):
-    st.session_state["new_data"] = True
-
-# Maintain consistent data unless refreshed
+# Manage data generation
 if "prices" not in st.session_state or st.session_state.get("new_data"):
-    st.session_state["prices"] = generate_daily_cycle(phase_shift=18)  # evening peak
-    st.session_state["carbon"] = generate_daily_cycle(amplitude=100, base=300, noise=25, phase_shift=16)
+    st.session_state["prices"] = generate_daily_cycle(base=base_price, noise=10, phase_shift=18)
+    st.session_state["carbon"] = generate_daily_cycle(base=base_carbon, amplitude=100, noise=25, phase_shift=16)
     st.session_state["timestamps"] = pd.date_range("2025-01-01", periods=24, freq="H")
     st.session_state["new_data"] = False
 
@@ -126,3 +144,4 @@ with col2:
         "carbon": "{:.0f} g",
         "soc": "{:.2f}"
     }))
+
