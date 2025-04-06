@@ -5,7 +5,17 @@ import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="Energy Grid Battery Simulator", layout="wide")
 
-st.title("🔋 Dispatch Strategy Simulator")
+st.title("🔋 FlexKit Energy Strategy Simulator")
+st.markdown("""
+Welcome to FlexKit's battery dispatch simulator.  
+You can test strategies across carbon, price, and grid demand.
+
+👉 Use the sidebar to configure your settings  
+🔁 Or jump directly to other tools:
+- [Compare Strategies](./Strategy_Comparison)
+- [Explore Emissions](./Emissions_Explorer)
+- [Size Your Battery](./Battery_Sizing_Tool)
+""")
 st.markdown("""
 Simulate how a battery dispatches based on:
 - energy **price**
