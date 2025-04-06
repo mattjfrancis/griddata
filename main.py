@@ -19,26 +19,8 @@ And view detailed **cost**, **carbon**, and **usage** insights.
 
 # Sidebar: Region and Battery Settings
 
-st.sidebar.title("🔧 FlexKit Navigation")
-page = st.sidebar.radio("Go to", ["Home", "Strategy Comparison", "Emissions Explorer", "Battery Sizing Tool"])
+st.sidebar.title("🔧 Simulation Parameters")
 
-# Route logic
-if page == "Home":
-    st.title("🔋 FlexKit Simulator")
-    st.markdown("Welcome to the simulator... [your main logic here]")
-
-elif page == "Strategy Comparison":
-    st.title("📊 Strategy Comparison")
-    st.markdown("Run all strategies and compare performance...")
-    # You could import from other files if needed
-
-elif page == "Emissions Explorer":
-    st.title("🌍 Emissions Explorer")
-    st.markdown("Visualize regional hourly emissions...")
-
-elif page == "Battery Sizing Tool":
-    st.title("🔧 Battery Sizing")
-    st.markdown("Estimate your required battery size...")
 region = st.sidebar.selectbox("Select Region", ["UK", "Germany", "Texas", "California", "France"])
 
 region_profiles = {
