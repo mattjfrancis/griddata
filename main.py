@@ -1,125 +1,200 @@
+
 import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="FlexKit Unified App", layout="wide")
+st.set_page_config(page_title="Energy Grid Battery Simulator", layout="wide")
 
-# Sidebar navigation
-st.sidebar.title("🔧 FlexKit Tools")
-page = st.sidebar.radio("Navigate to", ["Home", "Strategy Comparison", "Emissions Explorer", "Battery Sizing Tool"])
+st.title("🔋 Dispatch Strategy Simulator")
+st.markdown("""
+Simulate how a battery dispatches based on:
+- energy **price**
+- **carbon intensity**
+- **user demand**
+- **tariff avoidance**
+- multiple **dispatch strategies**
 
-# ================== PAGE: HOME ==================
-if page == "Home":
-    st.title("🔋 FlexKit Energy Dispatch Simulator")
+And view detailed **cost**, **carbon**, and **usage** insights.
+""")
 
-    # Region selection and price/carbon generation
-    region_profiles = {
-        "UK": {"price_base": 120, "carbon_base": 250, "price_amp": 60, "carbon_amp": 100, "noise": 15},
-        "Germany": {"price_base": 90, "carbon_base": 300, "price_amp": 50, "carbon_amp": 80, "noise": 15},
-        "Texas": {"price_base": 60, "carbon_base": 400, "price_amp": 80, "carbon_amp": 120, "noise": 20},
-        "California": {"price_base": 100, "carbon_base": 200, "price_amp": 70, "carbon_amp": 60, "noise": 10},
-        "France": {"price_base": 80, "carbon_base": 100, "price_amp": 40, "carbon_amp": 30, "noise": 5},
-    }
+# Sidebar: Region and Battery Settings
+st.sidebar.header("🌍 Region Settings")
+region = st.sidebar.selectbox("Select Region", ["UK", "Germany", "Texas", "California", "France"])
 
-    region = st.selectbox("🌍 Select Region", list(region_profiles.keys()))
-    profile = region_profiles[region]
+region_profiles = {
+    "UK": {"price_base": 120, "carbon_base": 250, "price_amp": 60, "carbon_amp": 100, "noise": 15},
+    "Germany": {"price_base": 90, "carbon_base": 300, "price_amp": 50, "carbon_amp": 80, "noise": 15},
+    "Texas": {"price_base": 60, "carbon_base": 400, "price_amp": 80, "carbon_amp": 120, "noise": 20},
+    "California": {"price_base": 100, "carbon_base": 200, "price_amp": 70, "carbon_amp": 60, "noise": 10},
+    "France": {"price_base": 80, "carbon_base": 100, "price_amp": 40, "carbon_amp": 30, "noise": 5},
+}
 
-    def generate_daily_cycle(amplitude, base, noise, phase_shift=0):
-        hours = np.arange(24)
-        cycle = base + amplitude * np.sin((hours - phase_shift) * np.pi / 12)
-        noise_component = np.random.normal(0, noise, size=24)
-        return np.clip(cycle + noise_component, 0, None)
+profile = region_profiles[region]
 
-    prices = generate_daily_cycle(profile["price_amp"], profile["price_base"], profile["noise"], phase_shift=18)
-    carbon = generate_daily_cycle(profile["carbon_amp"], profile["carbon_base"], profile["noise"], phase_shift=16)
-    time_range = pd.date_range("2025-01-01", periods=24, freq="H")
+st.sidebar.header("🔋 Battery Settings")
+battery_capacity_kWh = st.sidebar.slider("Battery Capacity (kWh)", 5, 100, 20)
+power_rating_kW = st.sidebar.slider("Power Rating (kW)", 1, 50, 5)
+passive_discharge = st.sidebar.slider("Passive Discharge Rate (%/hr)", 0.0, 2.0, 0.2) / 100
 
-    # Dispatch Strategy
-    st.subheader("⚙️ Strategy Configuration")
-    price_low = st.slider("🔻 Charge Below Price (£/MWh)", 10, 100, 50)
-    price_high = st.slider("🔺 Discharge Above Price (£/MWh)", 100, 300, 150)
+# Tariff threshold
+st.sidebar.header("💰 Tariff Avoidance")
+tariff_threshold = st.sidebar.slider("High Tariff Threshold (£/MWh)", 150, 300, 200)
 
-    st.subheader("📈 Simulation Result")
+# Load Profile
+st.sidebar.header("⚡ User Load Profile")
+morning_demand = st.sidebar.slider("6am–12pm Demand (kW)", 0.0, 10.0, 2.0)
+afternoon_demand = st.sidebar.slider("12pm–6pm Demand (kW)", 0.0, 10.0, 3.0)
+evening_demand = st.sidebar.slider("6pm–12am Demand (kW)", 0.0, 10.0, 5.0)
+night_demand = st.sidebar.slider("12am–6am Demand (kW)", 0.0, 10.0, 1.0)
 
-    def run_dispatch(prices, carbon, soc=0.5):
-        schedule = []
-        for t, p in enumerate(prices):
-            if p < price_low and soc < 1.0:
+# Strategy Select
+st.sidebar.header("🧠 Strategy Selection")
+strategy_choice = st.sidebar.selectbox("Choose Dispatch Strategy", [
+    "Blended (Price + Carbon)",
+    "Tariff Avoidance Only",
+    "Price Arbitrage",
+    "Carbon Minimizer"
+])
+
+# Config
+battery_config = {
+    "charge_efficiency": 0.95,
+    "discharge_efficiency": 0.9,
+    "step_size": power_rating_kW / battery_capacity_kWh / 2,
+    "passive_discharge": passive_discharge,
+    "tariff_threshold": tariff_threshold
+}
+
+def generate_daily_cycle(amplitude, base, noise, phase_shift=0):
+    hours = np.arange(24)
+    cycle = base + amplitude * np.sin((hours - phase_shift) * np.pi / 12)
+    noise_component = np.random.normal(0, noise, size=24)
+    return np.clip(cycle + noise_component, 0, None)
+
+def generate_user_demand():
+    profile = []
+    for hour in range(24):
+        if 6 <= hour < 12:
+            demand = morning_demand
+        elif 12 <= hour < 18:
+            demand = afternoon_demand
+        elif 18 <= hour < 24:
+            demand = evening_demand
+        else:
+            demand = night_demand
+        profile.append(demand / battery_capacity_kWh)
+    return profile
+
+if "last_region" not in st.session_state or st.session_state["last_region"] != region:
+    st.session_state["prices"] = generate_daily_cycle(profile["price_amp"], profile["price_base"], profile["noise"], phase_shift=18)
+    st.session_state["carbon"] = generate_daily_cycle(profile["carbon_amp"], profile["carbon_base"], profile["noise"], phase_shift=16)
+    st.session_state["timestamps"] = pd.date_range("2025-01-01", periods=24, freq="H")
+    st.session_state["last_region"] = region
+
+prices = st.session_state["prices"]
+carbon = st.session_state["carbon"]
+user_demand_profile = generate_user_demand()
+time_range = st.session_state["timestamps"]
+
+def update_soc(soc, action, config, demand_kWh):
+    step = config["step_size"]
+    soc -= config["passive_discharge"]
+    soc -= demand_kWh
+    soc = max(0.0, soc)
+    if action == "charge":
+        soc = min(1.0, soc + step * config["charge_efficiency"])
+    elif action == "discharge":
+        soc = max(0.0, soc - step / config["discharge_efficiency"])
+    return soc
+
+def dispatch_strategy(prices, carbon, user_demand, soc, config, strategy):
+    schedule = []
+    for t, (p, c, demand_kWh) in enumerate(zip(prices, carbon, user_demand)):
+        if strategy == "Tariff Avoidance Only":
+            action = "charge" if p < config["tariff_threshold"] and soc < 1.0 else "idle"
+        elif strategy == "Price Arbitrage":
+            action = "charge" if p < 80 and soc < 1.0 else "discharge" if p > 150 and soc > 0.2 else "idle"
+        elif strategy == "Carbon Minimizer":
+            action = "charge" if c < 200 and soc < 1.0 else "discharge" if c > 400 and soc > 0.2 else "idle"
+        else:
+            price_score = 1 - (p - min(prices)) / (max(prices) - min(prices))
+            carbon_score = 1 - (c - min(carbon)) / (max(carbon) - min(carbon))
+            blended_score = 0.5 * carbon_score + 0.5 * price_score
+            if blended_score > 0.7 and soc < 1.0:
                 action = "charge"
-                soc = min(1.0, soc + 0.05)
-            elif p > price_high and soc > 0.2:
+            elif blended_score < 0.3 and soc > 0.2:
                 action = "discharge"
-                soc = max(0.0, soc - 0.05)
             else:
                 action = "idle"
-            schedule.append({"time": t, "timestamp": time_range[t], "price": p, "carbon": carbon[t], "soc": soc, "action": action})
-        return pd.DataFrame(schedule)
 
-    df = run_dispatch(prices, carbon)
+        schedule.append({
+            "time": t,
+            "timestamp": time_range[t],
+            "action": action,
+            "price": p,
+            "carbon": c,
+            "soc": soc,
+            "user_demand_kWh": demand_kWh * battery_capacity_kWh,
+            "grid_energy_kWh": 0
+        })
 
-    fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(df["timestamp"], df["soc"], label="State of Charge")
-    ax.set_ylabel("SOC")
-    ax.set_title("Battery Dispatch Simulation")
+        before_soc = soc
+        soc = update_soc(soc, action, config, demand_kWh)
+        after_soc = soc
+        schedule[-1]["grid_energy_kWh"] = abs(after_soc - before_soc) * battery_capacity_kWh
+
+    return pd.DataFrame(schedule)
+
+soc_start = 0.5
+df_schedule = dispatch_strategy(prices, carbon, user_demand_profile, soc_start, battery_config, strategy_choice)
+
+# ======== Summary Stats ========
+total_energy_used = df_schedule["grid_energy_kWh"].sum()
+total_cost = (df_schedule["price"] * df_schedule["grid_energy_kWh"] / 1000).sum()
+total_emissions = (df_schedule["carbon"] * df_schedule["grid_energy_kWh"] / 1000).sum()
+high_tariff_hours = df_schedule[df_schedule["price"] > tariff_threshold].shape[0]
+
+st.subheader("📈 Strategy Summary")
+st.markdown(f"""
+**Strategy:** `{strategy_choice}`  
+- 🔌 **Total Energy Drawn from Grid:** `{total_energy_used:.2f} kWh`  
+- 💸 **Estimated Cost:** `£{total_cost:.2f}`  
+- 🟢 **Estimated Carbon Emissions:** `{total_emissions:.2f} kg CO₂`  
+- ⛔ **High Tariff Hours Avoided:** `{high_tariff_hours}/24`
+""")
+
+# ======== Visualization ========
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.subheader("📊 Simulation Results")
+    fig, axs = plt.subplots(4, 1, figsize=(10, 10), sharex=True)
+    axs[0].plot(time_range, df_schedule["price"], label="Price (£/MWh)")
+    axs[0].set_ylabel("Price")
+    axs[0].legend()
+    axs[1].plot(time_range, df_schedule["carbon"], label="Carbon Intensity (gCO₂/kWh)", color="green")
+    axs[1].set_ylabel("Carbon")
+    axs[1].legend()
+    axs[2].plot(time_range, df_schedule["user_demand_kWh"], label="User Demand (kWh)", color="orange")
+    axs[2].set_ylabel("Demand")
+    axs[2].legend()
+    axs[3].plot(time_range, df_schedule["soc"], label="State of Charge", color="purple")
+    action_colors = df_schedule["action"].map({"charge": "blue", "discharge": "red", "idle": "gray"})
+    action_vals = df_schedule["action"].map({"charge": 1, "discharge": -1, "idle": 0})
+    axs[3].scatter(time_range, action_vals, color=action_colors, label="Action", zorder=3)
+    axs[3].set_ylabel("SOC / Action")
+    axs[3].legend()
+    plt.xlabel("Time")
+    plt.tight_layout()
     st.pyplot(fig)
-    st.dataframe(df)
 
-# ================== STRATEGY COMPARISON ==================
-elif page == "Strategy Comparison":
-    st.title("📊 Strategy Comparison")
-
-    st.sidebar.header("⚖️ Scoring Weights")
-    cost_weight = st.sidebar.slider("Weight for Cost", 0.0, 1.0, 0.5)
-    carbon_weight = 1.0 - cost_weight
-    st.sidebar.markdown(f"🔁 Carbon Weight = **{carbon_weight:.2f}**")
-
-    # Corrected strategy results
-    results = pd.DataFrame([
-        {"Strategy": "Blended (Price + Carbon)", "Energy": 14.6, "Cost": 9.32, "CO2": 7.1},
-        {"Strategy": "Tariff Avoidance Only", "Energy": 12.3, "Cost": 6.85, "CO2": 8.5},
-        {"Strategy": "Price Arbitrage", "Energy": 15.1, "Cost": 11.2, "CO2": 9.9},
-        {"Strategy": "Carbon Minimizer", "Energy": 13.8, "Cost": 8.90, "CO2": 5.3}
-    ])
-
-    results["Score"] = (
-        cost_weight * (1 - (results["Cost"] - results["Cost"].min()) / (results["Cost"].max() - results["Cost"].min())) +
-        carbon_weight * (1 - (results["CO2"] - results["CO2"].min()) / (results["CO2"].max() - results["CO2"].min()))
-    )
-    best_idx = results["Score"].idxmax()
-    results["🏆 Best"] = ""
-    results.loc[best_idx, "🏆 Best"] = "✅"
-
-    st.subheader("🏁 Strategy Performance")
-    st.dataframe(results[["Strategy", "Energy", "Cost", "CO2", "🏆 Best"]].style.format({
-        "Cost": "£{:.2f}", "CO2": "{:.1f}", "Energy": "{:.1f}"
+with col2:
+    st.subheader("📋 Dispatch Log")
+    st.dataframe(df_schedule[["timestamp", "action", "price", "carbon", "user_demand_kWh", "grid_energy_kWh", "soc"]].style.format({
+        "price": "£{:.0f}",
+        "carbon": "{:.0f} g",
+        "soc": "{:.2f}",
+        "user_demand_kWh": "{:.2f}",
+        "grid_energy_kWh": "{:.2f}"
     }))
-
-# ================== EMISSIONS EXPLORER ==================
-elif page == "Emissions Explorer":
-    st.title("🌍 Emissions Explorer")
-
-    regions = {"UK": 250, "Germany": 300, "France": 100, "California": 200, "Texas": 400}
-    region = st.selectbox("Select a Region", list(regions.keys()))
-    base_emission = regions[region]
-
-    hours = np.arange(24)
-    emissions = base_emission + 50 * np.sin((hours - 16) * np.pi / 12) + np.random.normal(0, 10, 24)
-
-    fig, ax = plt.subplots()
-    ax.plot(hours, emissions, marker="o")
-    ax.set_title(f"Estimated Hourly Emissions for {region}")
-    ax.set_xlabel("Hour of Day")
-    ax.set_ylabel("gCO₂/kWh")
-    st.pyplot(fig)
-
-# ================== BATTERY SIZING TOOL ==================
-elif page == "Battery Sizing Tool":
-    st.title("🔧 Battery Sizing Estimator")
-
-    daily_kWh = st.number_input("Estimated Daily Energy Need (kWh)", min_value=1.0, value=20.0)
-    days_of_autonomy = st.slider("Days of Backup Required", 1, 7, 2)
-    efficiency = st.slider("System Efficiency (%)", 70, 100, 90)
-
-    required_capacity = daily_kWh * days_of_autonomy / (efficiency / 100)
-    st.metric("Recommended Battery Capacity", f"{required_capacity:.1f} kWh")
