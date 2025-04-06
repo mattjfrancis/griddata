@@ -12,17 +12,16 @@ st.markdown("Simulate how a battery dispatches based on energy **price**, **carb
 st.sidebar.header("🌍 Region Settings")
 region = st.sidebar.selectbox("Select Region", ["UK", "Germany", "Texas", "California", "France"])
 
-# Simulated base prices & carbon intensity per region (simplified)
+# Region-specific base profiles
 region_profiles = {
-    "UK": {"price_base": 120, "carbon_base": 250},
-    "Germany": {"price_base": 90, "carbon_base": 300},
-    "Texas": {"price_base": 60, "carbon_base": 400},
-    "California": {"price_base": 100, "carbon_base": 200},
-    "France": {"price_base": 80, "carbon_base": 100},
+    "UK": {"price_base": 120, "carbon_base": 250, "price_amp": 60, "carbon_amp": 100, "noise": 15},
+    "Germany": {"price_base": 90, "carbon_base": 300, "price_amp": 50, "carbon_amp": 80, "noise": 15},
+    "Texas": {"price_base": 60, "carbon_base": 400, "price_amp": 80, "carbon_amp": 120, "noise": 20},
+    "California": {"price_base": 100, "carbon_base": 200, "price_amp": 70, "carbon_amp": 60, "noise": 10},
+    "France": {"price_base": 80, "carbon_base": 100, "price_amp": 40, "carbon_amp": 30, "noise": 5},
 }
 
-base_price = region_profiles[region]["price_base"]
-base_carbon = region_profiles[region]["carbon_base"]
+profile = region_profiles[region]
 
 st.sidebar.header("🔋 Battery Settings")
 battery_capacity_kWh = st.sidebar.slider("Battery Capacity (kWh)", 5, 100, 20)
@@ -44,26 +43,22 @@ battery_config = {
     "carbon_weight": carbon_weight,
     "charge_efficiency": 0.95,
     "discharge_efficiency": 0.9,
-    "step_size": power_rating_kW / battery_capacity_kWh / 2  # how much SOC can change in one hour
+    "step_size": power_rating_kW / battery_capacity_kWh / 2
 }
 
-# Regenerate button
-if st.button("🔄 Regenerate Grid Data"):
-    st.session_state["new_data"] = True
-
-# Simulated daily cycle function
-def generate_daily_cycle(amplitude=70, base=100, noise=10, phase_shift=0):
+# Generate region-aware daily cycle
+def generate_daily_cycle(amplitude, base, noise, phase_shift=0):
     hours = np.arange(24)
     cycle = base + amplitude * np.sin((hours - phase_shift) * np.pi / 12)
     noise_component = np.random.normal(0, noise, size=24)
     return np.clip(cycle + noise_component, 0, None)
 
-# Manage data generation
-if "prices" not in st.session_state or st.session_state.get("new_data"):
-    st.session_state["prices"] = generate_daily_cycle(base=base_price, noise=10, phase_shift=18)
-    st.session_state["carbon"] = generate_daily_cycle(base=base_carbon, amplitude=100, noise=25, phase_shift=16)
+# Refresh on region change
+if "last_region" not in st.session_state or st.session_state["last_region"] != region:
+    st.session_state["prices"] = generate_daily_cycle(profile["price_amp"], profile["price_base"], profile["noise"], phase_shift=18)
+    st.session_state["carbon"] = generate_daily_cycle(profile["carbon_amp"], profile["carbon_base"], profile["noise"], phase_shift=16)
     st.session_state["timestamps"] = pd.date_range("2025-01-01", periods=24, freq="H")
-    st.session_state["new_data"] = False
+    st.session_state["last_region"] = region
 
 prices = st.session_state["prices"]
 carbon = st.session_state["carbon"]
