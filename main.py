@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import time
 
 st.set_page_config(page_title="FlexKit Animated Dispatch", layout="wide")
-st.title("FlexKit: Animated Battery Dispatch Simulation")
+st.title("FlexKit: Animated Battery Dispatch Simulation") 
 
 # --- Get Carbon Intensity Forecast (UK API) ---
 def get_carbon_data():
