@@ -42,7 +42,15 @@ charge_carbon_limit = st.sidebar.slider("Charge if Carbon < ", 100, 300, 200)
 discharge_carbon_limit = st.sidebar.slider("Discharge if Carbon > ", 300, 500, 400)
 speed = st.sidebar.slider("Animation Speed (sec/frame)", 0.01, 0.5, 0.05)
 
+
+# --- Frequency Regulation Settings ---
+st.sidebar.header("Frequency Regulation")
+freq_reg_participation = st.sidebar.checkbox("Participate in Frequency Regulation?")
+freq_reg_share = st.sidebar.slider("Max Share of Battery for Grid (Frequency Regulation)", 0.0, 0.5, 0.1, 0.01)
+freq_reg_rate = st.sidebar.slider("Revenue Rate (£/kWh reserved)", 0.0, 1.0, 0.2, 0.01)
+
 # --- Dispatch Logic ---
+
 soc = soc_start
 soc_series, actions, grid_energy = [], [], []
 
@@ -60,7 +68,13 @@ for i in range(steps):
     actions.append(action)
     grid_energy.append(abs(soc_series[-1] - soc) * battery_kWh)
 
+
+# --- Frequency Revenue ---
+freq_capacity_reserved = battery_kWh * freq_reg_share if freq_reg_participation else 0
+freq_reg_revenue = freq_capacity_reserved * freq_reg_rate * 24  # 24h revenue
+
 # --- DataFrame ---
+
 df = pd.DataFrame({
     "Time": timestamps,
     "Price": price,
@@ -70,7 +84,19 @@ df = pd.DataFrame({
     "Grid Energy (kWh)": grid_energy
 })
 
+
+# --- Strategy Summary ---
+total_cost = np.sum(np.array(grid_energy) * price / 1000)
+summary_md = f"""**Battery Capacity:** {battery_kWh} kWh  
+**Total Grid Energy Used:** {np.sum(grid_energy):.2f} kWh  
+**Charging Cost:** {total_cost:.2f}  
+**Frequency Reg Revenue:** {freq_reg_revenue:.2f}  
+**Net Revenue:** {freq_reg_revenue - total_cost:.2f}"""
+st.markdown("### Strategy Summary")
+st.markdown(summary_md)
+
 # --- Animate ---
+
 st.subheader("Dispatch Animation")
 
 plot_placeholder = st.empty()
