@@ -5,8 +5,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import time
 
-st.set_page_config(page_title="FlexKit Animated Dispatch", layout="wide")
-st.title("FlexKit: Animated Battery Dispatch Simulation")
+st.set_page_config(page_title="FlexKit Strategy Dashboard", layout="wide")
+st.title("FlexKit Dispatch Comparison Dashboard")
 
 # --- Get Carbon Intensity Forecast (UK API) ---
 def get_carbon_data():
@@ -19,12 +19,12 @@ def get_carbon_data():
     except:
         return 250 + 60 * np.cos(np.linspace(0, 2 * np.pi, 96))
 
-# --- Synthetic Price Signal ---
+# --- Price Signal ---
 def get_price_data():
     return 100 + 40 * np.sin(np.linspace(0, 2 * np.pi, 96)) + np.random.normal(0, 10, 96)
 
-# --- Setup ---
-steps = 96  # 15-min intervals for 24h
+# --- Parameters ---
+steps = 96
 timestamps = pd.date_range("2025-01-01", periods=steps, freq="15min")
 carbon = get_carbon_data()
 price = get_price_data()
@@ -34,59 +34,79 @@ st.sidebar.header("Battery Settings")
 battery_kWh = st.sidebar.slider("Battery Capacity (kWh)", 10, 100, 20)
 power_kW = st.sidebar.slider("Power Rating (kW)", 1, 20, 5)
 soc_start = st.sidebar.slider("Starting SOC", 0.0, 1.0, 0.5, 0.05)
-speed = st.sidebar.slider("Animation Speed (sec/frame)", 0.01, 0.5, 0.1)
 
-# --- Dispatch Simulation ---
-soc = soc_start
-soc_series, actions = [], []
+strategies = {
+    "Price Arbitrage": lambda p, c, soc: "charge" if p < 90 and soc < 1.0 else "discharge" if p > 130 and soc > 0.2 else "idle",
+    "Carbon Minimizer": lambda p, c, soc: "charge" if c < 200 and soc < 1.0 else "discharge" if c > 400 and soc > 0.2 else "idle",
+    "Blended": lambda p, c, soc: (
+        "charge" if (0.5 * (1 - (p - min(price))/(max(price)-min(price))) + 0.5 * (1 - (c - min(carbon))/(max(carbon)-min(carbon))) > 0.7 and soc < 1.0)
+        else "discharge" if (0.5 * (1 - (p - min(price))/(max(price)-min(price))) + 0.5 * (1 - (c - min(carbon))/(max(carbon)-min(carbon))) < 0.3 and soc > 0.2)
+        else "idle"
+    )
+}
 
-for i in range(steps):
-    p, c = price[i], carbon[i]
-    action = "idle"
-    if p < 90 and soc < 1.0:
-        action = "charge"
-        soc += power_kW / battery_kWh / 4
-    elif p > 130 and soc > 0.2:
-        action = "discharge"
-        soc -= power_kW / battery_kWh / 4
-    soc = np.clip(soc, 0.0, 1.0)
-    soc_series.append(soc)
-    actions.append(action)
+# --- Run Simulation For Each Strategy ---
+results = {}
 
-df = pd.DataFrame({
-    "Time": timestamps,
-    "Price": price,
-    "Carbon": carbon,
-    "Demand": demand,
-    "SOC": soc_series,
-    "Action": actions
-})
+for name, logic in strategies.items():
+    soc = soc_start
+    soc_series = []
+    actions = []
+    grid_energy = []
+    for i in range(steps):
+        p, c = price[i], carbon[i]
+        action = logic(p, c, soc)
+        if action == "charge":
+            soc += power_kW / battery_kWh / 4
+        elif action == "discharge":
+            soc -= power_kW / battery_kWh / 4
+        soc = np.clip(soc, 0.0, 1.0)
+        soc_series.append(soc)
+        actions.append(action)
+        grid_energy.append(abs(soc_series[-1] - soc) * battery_kWh)
+    df = pd.DataFrame({
+        "Time": timestamps,
+        "Price": price,
+        "Carbon": carbon,
+        "Demand": demand,
+        "SOC": soc_series,
+        "Action": actions,
+        "Grid Energy": grid_energy
+    })
+    df["Strategy"] = name
+    df["Cost"] = df["Grid Energy"] * df["Price"] / 1000
+    df["Emissions"] = df["Grid Energy"] * df["Carbon"] / 1000
+    results[name] = df
 
-# --- Animate Frame-by-Frame ---
-st.subheader("Battery Dispatch Animation")
+# --- Combine and Show Comparison Dashboard ---
+combined_df = pd.concat(results.values())
 
-plot_placeholder = st.empty()
-text_placeholder = st.empty()
-progress_bar = st.progress(0)
+st.subheader("Comparison Dashboard")
+selected_strategy = st.selectbox("Select Strategy to Inspect", list(strategies.keys()))
+df = results[selected_strategy]
 
-for t in range(steps):
-    fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(df["Time"][:t+1], df["SOC"][:t+1], label="SOC", color="purple")
-    ax.plot(df["Time"], df["Price"] / max(df["Price"]), label="Price (scaled)", alpha=0.3, color="blue")
-    ax.plot(df["Time"], df["Carbon"] / max(df["Carbon"]), label="Carbon (scaled)", alpha=0.3, color="green")
-    ax.axvline(df["Time"][t], color="black", linestyle="--", linewidth=1)
-    ax.set_ylabel("SOC / Scaled Signals")
-    ax.set_xlabel("Time")
-    ax.legend()
-    plot_placeholder.pyplot(fig)
+col1, col2, col3 = st.columns(3)
+col1.metric("Total Cost", f"{df['Cost'].sum():.2f}")
+col2.metric("Total Emissions", f"{df['Emissions'].sum():.2f} kg CO₂")
+col3.metric("Total Grid Energy", f"{df['Grid Energy'].sum():.2f} kWh")
 
-    action = df["Action"][t]
-    flow_text = "← Charging" if action == "charge" else "→ Discharging" if action == "discharge" else "Idle"
-    text_placeholder.markdown(f"""
-**Time:** {df["Time"][t]}  
-**SOC:** {df["SOC"][t]:.2f}  
-**Action:** {action}  
-**Grid Flow:** {"← Charging" if action == "charge" else "→ Discharging" if action == "discharge" else "Idle"}
-""")
-    progress_bar.progress(t / (steps - 1))
-    time.sleep(speed)
+# --- Plot Comparisons ---
+st.subheader("SOC Comparison")
+fig, ax = plt.subplots(figsize=(10, 5))
+for name, df in results.items():
+    ax.plot(df["Time"], df["SOC"], label=name)
+ax.legend()
+ax.set_ylabel("State of Charge")
+st.pyplot(fig)
+
+st.subheader("Cost & Emissions Over Time")
+fig, ax = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
+for name, df in results.items():
+    ax[0].plot(df["Time"], df["Cost"].cumsum(), label=name)
+    ax[1].plot(df["Time"], df["Emissions"].cumsum(), label=name)
+ax[0].set_ylabel("Cumulative Cost (£)")
+ax[1].set_ylabel("Cumulative Emissions (kg CO₂)")
+ax[1].set_xlabel("Time")
+ax[0].legend()
+ax[1].legend()
+st.pyplot(fig)
