@@ -17,17 +17,20 @@ and simulates a basic dispatch strategy for visualization.
 st.subheader("🌍 Carbon Intensity Forecast (UK-wide)")
 
 try:
-    r = requests.get("https://api.carbonintensity.org.uk/intensity")
-    data = r.json()["data"][0]  # Fixed indexing for list
-    forecast_time = pd.to_datetime(data["from"])
-    intensity_value = data["intensity"]["forecast"]
-
-    st.success(f"Forecasted Carbon Intensity: {intensity_value} gCO₂/kWh at {forecast_time}")
-
-except Exception as e:
+    response = requests.get("https://api.carbonintensity.org.uk/intensity")
+    response.raise_for_status()  # Ensure the request was successful
+    data = response.json()["data"]  # Access the 'data' list
+    if data:
+        forecast_time = pd.to_datetime(data[0]["from"])
+        intensity_value = data[0]["intensity"]["forecast"]
+        st.success(f"Forecasted Carbon Intensity: {intensity_value} gCO₂/kWh at {forecast_time}")
+    else:
+        st.warning("No data available from the Carbon Intensity API.")
+        intensity_value = 200  # Fallback default
+except requests.RequestException as e:
     st.error(f"Failed to fetch live carbon data: {e}")
-    intensity_value = 200  # fallback default
-
+    intensity_value = 200  # Fallback default
+    
 # --- Simulate Dispatch Based on Carbon ---
 st.subheader("🔋 Simulate Simple Carbon-Based Strategy")
 
