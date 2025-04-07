@@ -5,77 +5,91 @@ import numpy as np
 import requests
 import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="FlexKit Grid Simulator", layout="wide")
-st.title("🔋 FlexKit: Real-time Carbon-Aware Dispatch Simulator")
+st.set_page_config(page_title="FlexKit Dispatch Demo", layout="wide")
+st.title("FlexKit Battery Dispatch Demo")
 
-st.markdown("""
-Pulls live carbon intensity forecasts from the UK Carbon Intensity API  
-and simulates a basic dispatch strategy for visualization.
-""")
+mode = st.radio("Select Mode", ["Live Mode (Carbon API)", "Test Mode (Simulated)"])
 
-# --- Live Carbon Intensity Data ---
-st.subheader("🌍 Carbon Intensity Forecast (UK-wide)")
+def get_live_carbon():
+    try:
+        r = requests.get("https://api.carbonintensity.org.uk/intensity")
+        data = r.json()["data"]
+        forecast = data[0]["intensity"]["forecast"]
+        return forecast + 60 * np.cos(np.linspace(0, 2 * np.pi, 24)) + np.random.normal(0, 10, 24)
+    except Exception as e:
+        st.error(f"Live data fetch failed: {e}")
+        return 250 + 30 * np.sin(np.linspace(0, 2 * np.pi, 24)) + np.random.normal(0, 10, 24)
 
-try:
-    response = requests.get("https://api.carbonintensity.org.uk/intensity")
-    response.raise_for_status()  # Ensure the request was successful
-    data = response.json()["data"]  # Access the 'data' list
-    if data:
-        forecast_time = pd.to_datetime(data[0]["from"])
-        intensity_value = data[0]["intensity"]["forecast"]
-        st.success(f"Forecasted Carbon Intensity: {intensity_value} gCO₂/kWh at {forecast_time}")
-    else:
-        st.warning("No data available from the Carbon Intensity API.")
-        intensity_value = 200  # Fallback default
-except requests.RequestException as e:
-    st.error(f"Failed to fetch live carbon data: {e}")
-    intensity_value = 200  # Fallback default
-    
-# --- Simulate Dispatch Based on Carbon ---
-st.subheader("🔋 Simulate Simple Carbon-Based Strategy")
-
-# User Inputs
-battery_kWh = st.slider("Battery Capacity (kWh)", 5, 50, 20)
-start_soc = st.slider("Starting SOC", 0.0, 1.0, 0.5, 0.05)
-threshold = st.slider("Charge if carbon below (gCO₂/kWh)", 100, 400, 200)
-
-# Generate 24h carbon signal
-np.random.seed(1)
+# Simulated or live forecast
+np.random.seed(42)
 hours = pd.date_range("2025-01-01", periods=24, freq="H")
-carbon = intensity_value + 60 * np.cos(np.linspace(0, 2 * np.pi, 24)) + np.random.normal(0, 20, 24)
+price = 100 + 20 * np.sin(np.linspace(0, 2 * np.pi, 24)) + np.random.normal(0, 5, 24)
+carbon = get_live_carbon() if mode == "Live Mode (Carbon API)" else 250 + 30 * np.sin(np.linspace(0, 2 * np.pi, 24))
+demand = np.clip(2 + np.sin(np.linspace(0, 2 * np.pi, 24)), 0, None)
 
-# Dispatch simulation
-soc = start_soc
-soc_series = []
-actions = []
+# Sidebar inputs
+st.sidebar.header("Battery Settings")
+capacity = st.sidebar.slider("Battery Capacity (kWh)", 5, 50, 20)
+power = st.sidebar.slider("Power (kW)", 1, 10, 5)
+soc_start = st.sidebar.slider("Initial SOC", 0.0, 1.0, 0.5, 0.05)
+strategy = st.sidebar.selectbox("Dispatch Strategy", ["Blended (Price + Carbon)", "Price Arbitrage", "Carbon Minimizer"])
 
-for c in carbon:
-    if c < threshold and soc < 1.0:
-        action = "charge"
-        soc += 0.05
-    elif c > threshold + 100 and soc > 0.2:
-        action = "discharge"
-        soc -= 0.05
+# Simulation
+soc = soc_start
+soc_series, action_series, energy_series = [], [], []
+
+for i in range(24):
+    p, c, d = price[i], carbon[i], demand[i]
+    action = "idle"
+    if strategy == "Price Arbitrage":
+        action = "charge" if p < 90 and soc < 1.0 else "discharge" if p > 130 and soc > 0.2 else "idle"
+    elif strategy == "Carbon Minimizer":
+        action = "charge" if c < 200 and soc < 1.0 else "discharge" if c > 400 and soc > 0.2 else "idle"
     else:
-        action = "idle"
-    soc = np.clip(soc, 0.0, 1.0)
+        p_score = 1 - (p - min(price)) / (max(price) - min(price))
+        c_score = 1 - (c - min(carbon)) / (max(carbon) - min(carbon))
+        blended = 0.5 * p_score + 0.5 * c_score
+        action = "charge" if blended > 0.7 and soc < 1.0 else "discharge" if blended < 0.3 and soc > 0.2 else "idle"
+
+    prev_soc = soc
+    if action == "charge":
+        soc = min(1.0, soc + (power / capacity) * 0.5)
+    elif action == "discharge":
+        soc = max(0.0, soc - (power / capacity) * 0.5)
+
     soc_series.append(soc)
-    actions.append(action)
+    action_series.append(action)
+    energy_series.append(abs(soc - prev_soc) * capacity)
 
 df = pd.DataFrame({
     "Time": hours,
+    "Price": price,
     "Carbon": carbon,
+    "Demand": demand,
     "SOC": soc_series,
-    "Action": actions
+    "Action": action_series,
+    "Grid Energy (kWh)": energy_series
 })
 
-# --- Plotting ---
-st.subheader("📊 Simulation Results")
-fig, ax = plt.subplots(figsize=(10, 4))
-ax.plot(df["Time"], df["Carbon"], label="Carbon Intensity", color="green")
-ax.plot(df["Time"], df["SOC"], label="State of Charge", color="blue")
-ax.set_ylabel("gCO₂/kWh / SOC")
-ax.legend()
+# Summary
+total_cost = (df["Grid Energy (kWh)"] * df["Price"] / 1000).sum()
+total_co2 = (df["Grid Energy (kWh)"] * df["Carbon"] / 1000).sum()
+
+st.subheader("Summary")
+st.markdown(f"**Total Cost:** £{total_cost:.2f}")
+st.markdown(f"**Total Emissions:** {total_co2:.2f} kg CO₂")
+st.markdown(f"**Total Energy:** {df['Grid Energy (kWh)'].sum():.2f} kWh")
+
+# Plot
+fig, ax = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
+ax[0].plot(df["Time"], df["Price"], label="Price", color="blue")
+ax[1].plot(df["Time"], df["Carbon"], label="Carbon", color="green")
+ax[2].plot(df["Time"], df["SOC"], label="SOC", color="purple")
+ax[2].scatter(df["Time"], [1 if a=="charge" else -1 if a=="discharge" else 0 for a in df["Action"]],
+              color=["blue" if a=="charge" else "red" if a=="discharge" else "gray" for a in df["Action"]],
+              label="Action", zorder=3)
+for a in ax: a.legend()
 st.pyplot(fig)
 
+st.subheader("Dispatch Table")
 st.dataframe(df)
