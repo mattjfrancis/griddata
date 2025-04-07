@@ -82,7 +82,7 @@ for t in range(steps):
 
     action = df["Action"][t]
     flow_text = "← Charging" if action == "charge" else "→ Discharging" if action == "discharge" else "Idle"
-    text_placeholder.markdown(f"**Time:** {df['Time'][t]}  
+    text_placeholder.markdown("**Time:** {df['Time'][t]}  
 **SOC:** {df['SOC'][t]:.2f}  
 **Action:** {action}  
 **Grid Flow:** {flow_text}")
