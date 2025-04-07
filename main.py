@@ -18,7 +18,7 @@ st.subheader("🌍 Carbon Intensity Forecast (UK-wide)")
 
 try:
     r = requests.get("https://api.carbonintensity.org.uk/intensity")
-    data = r.json()["data"]
+    data = r.json()["data"][0]  # Fixed indexing for list
     forecast_time = pd.to_datetime(data["from"])
     intensity_value = data["intensity"]["forecast"]
 
