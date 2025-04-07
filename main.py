@@ -6,10 +6,10 @@ import matplotlib.pyplot as plt
 import time
 import requests
 
-st.set_page_config(page_title="FlexKit Dispatch Explorer", layout="wide")
-st.title("FlexKit: Animated Dispatch with Strategy Controls")
+st.set_page_config(page_title="FlexKit Cloud Dispatch", layout="wide")
+st.title("FlexKit: Market-Based Flexibility + Cloud Dashboard")
 
-# --- Forecast Data (24h, 15-min) ---
+# --- Carbon & Price Forecast ---
 def get_carbon_data():
     try:
         r = requests.get("https://api.carbonintensity.org.uk/intensity")
@@ -23,102 +23,102 @@ def get_carbon_data():
 def get_price_data():
     return 100 + 40 * np.sin(np.linspace(0, 2 * np.pi, 96)) + np.random.normal(0, 10, 96)
 
+def get_reg_market_price():
+    return 0.3 + 0.2 * np.cos(np.linspace(0, 2 * np.pi, 96)) + np.random.normal(0, 0.05, 96)
+
+# --- Forecast Setup ---
 steps = 96
 timestamps = pd.date_range("2025-01-01", periods=steps, freq="15min")
 carbon = get_carbon_data()
 price = get_price_data()
-demand = np.clip(2 + 1.5 * np.sin(np.linspace(0, 2 * np.pi, steps)), 0, None)
+reg_market_price = get_reg_market_price()
 
-# --- User Controls ---
+# --- User Inputs ---
 st.sidebar.header("Battery Settings")
-battery_kWh = st.sidebar.slider("Capacity (kWh)", 10, 100, 20)
-power_kW = st.sidebar.slider("Power (kW)", 1, 20, 5)
-soc_start = st.sidebar.slider("Starting SOC", 0.0, 1.0, 0.5, 0.05)
+battery_kWh = st.sidebar.slider("Battery Capacity", 10, 100, 30)
+power_kW = st.sidebar.slider("Power Rating", 1, 20, 5)
+soc_start = st.sidebar.slider("Start SOC", 0.0, 1.0, 0.5, 0.05)
 
-st.sidebar.header("Strategy Settings")
-charge_price_limit = st.sidebar.slider("Charge if Price < ", 50, 150, 90)
-discharge_price_limit = st.sidebar.slider("Discharge if Price > ", 100, 200, 130)
-charge_carbon_limit = st.sidebar.slider("Charge if Carbon < ", 100, 300, 200)
-discharge_carbon_limit = st.sidebar.slider("Discharge if Carbon > ", 300, 500, 400)
-speed = st.sidebar.slider("Animation Speed (sec/frame)", 0.01, 0.5, 0.05)
-
-
-# --- Frequency Regulation Settings ---
 st.sidebar.header("Frequency Regulation")
-freq_reg_participation = st.sidebar.checkbox("Participate in Frequency Regulation?")
-freq_reg_share = st.sidebar.slider("Max Share of Battery for Grid (Frequency Regulation)", 0.0, 0.5, 0.1, 0.01)
-freq_reg_rate = st.sidebar.slider("Revenue Rate (£/kWh reserved)", 0.0, 1.0, 0.2, 0.01)
+participate = st.sidebar.checkbox("Enable Grid Support (Regulation)", True)
+max_reg_share = st.sidebar.slider("Max Share for Regulation", 0.0, 0.5, 0.1)
+speed = st.sidebar.slider("Animation Speed", 0.01, 0.3, 0.05)
 
-# --- Dispatch Logic ---
-
+# --- Simulate Dispatch ---
 soc = soc_start
-soc_series, actions, grid_energy = [], [], []
+soc_series = []
+actions = []
+grid_energy = []
+reg_revenue = []
+carbon_offset = []
 
 for i in range(steps):
-    p, c = price[i], carbon[i]
+    p, c, reg_price = price[i], carbon[i], reg_market_price[i]
     action = "idle"
-    if p < charge_price_limit and c < charge_carbon_limit and soc < 1.0:
+
+    if p < 90 and soc < 1.0:
         action = "charge"
         soc += power_kW / battery_kWh / 4
-    elif (p > discharge_price_limit or c > discharge_carbon_limit) and soc > 0.2:
+        energy_used = power_kW / 4
+        grid_energy.append(energy_used)
+        carbon_offset.append(0)
+        reg_revenue.append(0)
+    elif p > 130 and soc > 0.2:
         action = "discharge"
         soc -= power_kW / battery_kWh / 4
+        energy_out = power_kW / 4
+        grid_energy.append(0)
+        carbon_offset.append(energy_out * c / 1000)
+        reg_revenue.append(0)
+    else:
+        # idle but participate in regulation
+        grid_energy.append(0)
+        carbon_offset.append(0)
+        if participate:
+            capacity = battery_kWh * max_reg_share
+            reg_revenue.append(capacity * reg_price / 4)
+        else:
+            reg_revenue.append(0)
+
     soc = np.clip(soc, 0.0, 1.0)
     soc_series.append(soc)
     actions.append(action)
-    grid_energy.append(abs(soc_series[-1] - soc) * battery_kWh)
 
-
-# --- Frequency Revenue ---
-freq_capacity_reserved = battery_kWh * freq_reg_share if freq_reg_participation else 0
-freq_reg_revenue = freq_capacity_reserved * freq_reg_rate * 24  # 24h revenue
-
-# --- DataFrame ---
-
+# --- Frame Data ---
 df = pd.DataFrame({
     "Time": timestamps,
     "Price": price,
     "Carbon": carbon,
     "SOC": soc_series,
     "Action": actions,
-    "Grid Energy (kWh)": grid_energy
+    "Grid Energy (kWh)": grid_energy,
+    "Reg Revenue (£)": reg_revenue,
+    "CO2 Offset (kg)": carbon_offset
 })
 
+# --- Dashboard Overview ---
+st.subheader("📊 Strategy Overview")
+col1, col2, col3 = st.columns(3)
+col1.metric("Total Grid Energy", f"{df['Grid Energy (kWh)'].sum():.2f} kWh")
+col2.metric("Carbon Offset", f"{np.sum(df['CO2 Offset (kg)']):.2f} kg")
+col3.metric("Frequency Revenue", f"£{np.sum(df['Reg Revenue (£)']):.2f}")
 
-# --- Strategy Summary ---
-total_cost = np.sum(np.array(grid_energy) * price / 1000)
-summary_md = f"""**Battery Capacity:** {battery_kWh} kWh  
-**Total Grid Energy Used:** {np.sum(grid_energy):.2f} kWh  
-**Charging Cost:** {total_cost:.2f}  
-**Frequency Reg Revenue:** {freq_reg_revenue:.2f}  
-**Net Revenue:** {freq_reg_revenue - total_cost:.2f}"""
-st.markdown("### Strategy Summary")
-st.markdown(summary_md)
+# --- Simulated Cloud Sync ---
+st.success("🔗 Cloud Sync: FlexKit Edge Dispatch connected to dashboard.flexkit.energy")
+st.caption("Data is simulated for demonstration purposes.")
 
 # --- Animate ---
-
-st.subheader("Dispatch Animation")
-
-plot_placeholder = st.empty()
-text_placeholder = st.empty()
-progress_bar = st.progress(0)
-
+plot = st.empty()
+progress = st.progress(0)
 for t in range(steps):
     fig, ax = plt.subplots(figsize=(10, 4))
     ax.plot(df["Time"][:t+1], df["SOC"][:t+1], label="SOC", color="purple")
-    ax.plot(df["Time"], df["Price"] / max(df["Price"]), label="Price (scaled)", alpha=0.3, color="blue")
-    ax.plot(df["Time"], df["Carbon"] / max(df["Carbon"]), label="Carbon (scaled)", alpha=0.3, color="green")
+    ax.plot(df["Time"], df["Price"] / max(df["Price"]), label="Price (scaled)", color="blue", alpha=0.3)
+    ax.plot(df["Time"], df["Carbon"] / max(df["Carbon"]), label="Carbon (scaled)", color="green", alpha=0.3)
+    ax.plot(df["Time"], df["Reg Revenue (£)"] / max(df["Reg Revenue (£)"] + 1e-5), label="Reg Revenue (scaled)", alpha=0.3, color="orange")
     ax.axvline(df["Time"][t], color="black", linestyle="--", linewidth=1)
-    ax.set_ylabel("SOC / Signals")
+    ax.set_ylabel("SOC & Scaled Metrics")
     ax.legend()
-    plot_placeholder.pyplot(fig)
-
-    action = df["Action"][t]
-    flow = "← Charging" if action == "charge" else "→ Discharging" if action == "discharge" else "Idle"
-    info = f"""**Time:** {df['Time'][t]}  
-**SOC:** {df['SOC'][t]:.2f}  
-**Action:** {action}  
-**Grid Flow:** {flow}"""
-    text_placeholder.markdown(info)
-    progress_bar.progress(t / (steps - 1))
+    plot.pyplot(fig)
+    progress.progress(t / (steps - 1))
     time.sleep(speed)
