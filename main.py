@@ -2,82 +2,88 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import requests
 import matplotlib.pyplot as plt
-import matplotlib.animation as animation
 
-st.set_page_config(page_title="FlexKit Animated Dispatch", layout="wide")
-st.title("FlexKit Dispatch Animation Demo")
+st.set_page_config(page_title="FlexKit Real-Time Dispatch Explorer", layout="wide")
+st.title("FlexKit: Real-Time Battery Dispatch Visualizer")
 
-# --- Settings ---
-battery_kWh = st.sidebar.slider("Battery Capacity (kWh)", 5, 50, 20)
-power_kW = st.sidebar.slider("Power Rating (kW)", 1, 10, 5)
-soc_start = st.sidebar.slider("Starting SOC", 0.0, 1.0, 0.5, 0.01)
-duration_hours = 1  # Simulating 1 hour in seconds (3600 steps)
+# --- Get Carbon Intensity Forecast (UK API) ---
+def get_carbon_data():
+    try:
+        r = requests.get("https://api.carbonintensity.org.uk/intensity")
+        data = r.json()["data"]
+        base = data[0]["intensity"]["forecast"]
+        carbon = base + 60 * np.cos(np.linspace(0, 2 * np.pi, 24)) + np.random.normal(0, 20, 24)
+        return np.clip(carbon, 100, 500)
+    except:
+        return 250 + 60 * np.cos(np.linspace(0, 2 * np.pi, 24))
 
-st.sidebar.markdown("Simulating 1 hour with second-by-second granularity.")
+# --- Generate Synthetic Price Data ---
+def get_price_data():
+    return 100 + 50 * np.sin(np.linspace(0, 2 * np.pi, 24)) + np.random.normal(0, 10, 24)
 
-# --- Synthetic signal data ---
-np.random.seed(42)
-seconds = np.arange(0, duration_hours * 3600)
-price = 100 + 30 * np.sin(2 * np.pi * seconds / 3600)
-carbon = 250 + 40 * np.cos(2 * np.pi * seconds / 3600)
-demand = 2 + 0.5 * np.sin(2 * np.pi * seconds / 3600)
+# --- Simulation Setup ---
+hours = pd.date_range("2025-01-01", periods=24, freq="H")
+carbon = get_carbon_data()
+price = get_price_data()
+demand = np.clip(2 + 1.5 * np.sin(np.linspace(0, 2 * np.pi, 24)), 0, None)
 
-# --- Dispatch logic ---
+st.sidebar.header("Battery Settings")
+battery_kWh = st.sidebar.slider("Battery Capacity (kWh)", 10, 100, 20)
+power_kW = st.sidebar.slider("Power Rating (kW)", 1, 20, 5)
+soc_start = st.sidebar.slider("Starting SOC", 0.0, 1.0, 0.5, 0.05)
+
+# --- Strategy Logic ---
 soc = soc_start
 soc_series = []
 actions = []
-for t in range(len(seconds)):
-    p, c = price[t], carbon[t]
+
+for i in range(24):
+    p, c = price[i], carbon[i]
     action = "idle"
-    if p < 100 and soc < 1.0:
+    if p < 90 and soc < 1.0:
         action = "charge"
-        soc += power_kW / battery_kWh / 3600
+        soc += power_kW / battery_kWh
     elif p > 130 and soc > 0.2:
         action = "discharge"
-        soc -= power_kW / battery_kWh / 3600
+        soc -= power_kW / battery_kWh
     soc = np.clip(soc, 0.0, 1.0)
     soc_series.append(soc)
     actions.append(action)
 
 df = pd.DataFrame({
-    "Second": seconds,
+    "Hour": hours,
     "Price": price,
     "Carbon": carbon,
+    "Demand": demand,
     "SOC": soc_series,
     "Action": actions
 })
 
-# --- Animation ---
-st.subheader("SOC Animation Over 1 Hour")
+# --- Slider Control ---
+t = st.slider("Select Hour", 0, 23, 0)
 
-fig, ax = plt.subplots(figsize=(8, 4))
-line, = ax.plot([], [], lw=2)
-ax.set_xlim(0, len(seconds))
-ax.set_ylim(0, 1)
-ax.set_xlabel("Seconds")
-ax.set_ylabel("State of Charge")
+st.subheader(f"Hour: {t} | Action: {df['Action'][t]}")
 
-def init():
-    line.set_data([], [])
-    return line,
+# --- Visual Dashboard ---
+fig, ax = plt.subplots(figsize=(10, 5))
+ax.plot(df["Hour"], df["SOC"], label="SOC", color="purple", linewidth=2)
+ax.bar(df["Hour"], df["Price"] / max(df["Price"]), alpha=0.3, label="Price (scaled)", color="blue")
+ax.bar(df["Hour"], df["Carbon"] / max(df["Carbon"]), alpha=0.3, label="Carbon (scaled)", color="green")
+ax.axvline(df["Hour"][t], color="black", linestyle="--", linewidth=1)
+ax.set_ylabel("State / Scaled Signals")
+ax.set_xlabel("Hour")
+ax.legend()
+st.pyplot(fig)
 
-def update(frame):
-    x = df["Second"][:frame]
-    y = df["SOC"][:frame]
-    line.set_data(x, y)
-    return line,
+# --- Animated Charge Bar ---
+st.markdown("### Battery State")
+st.progress(df["SOC"][t])
 
-ani = animation.FuncAnimation(fig, update, frames=len(seconds), init_func=init, blit=True, interval=1)
-
-from streamlit.components.v1 import html
-import base64
-from io import BytesIO
-
-# Convert to HTML5 video
-video_buf = BytesIO()
-ani.save(video_buf, writer="ffmpeg", fps=30)
-video_encoded = base64.b64encode(video_buf.getvalue()).decode("utf-8")
-video_html = f'<video width="700" controls autoplay loop><source src="data:video/mp4;base64,{video_encoded}" type="video/mp4"></video>'
-
-html(video_html, height=400)
+st.markdown(f'''
+- Price: {df["Price"][t]:.1f} /MWh  
+- Carbon: {df["Carbon"][t]:.0f} gCO2/kWh  
+- SOC: {df["SOC"][t]:.2f}  
+- Grid Flow: {"← Charging from Grid" if df["Action"][t] == "charge" else "→ Discharging to Grid" if df["Action"][t] == "discharge" else "Idle"}
+''')
